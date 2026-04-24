@@ -454,12 +454,18 @@ impl<'env> LockOperation<'env> {
                 .await?;
 
                 // fork: preserve URLs across re-locks; see issue astral-sh/uv#6349.
+                // If URL preservation makes the new lock equal to the previous one,
+                // skip the write so we don't touch uv.lock's mtime.
+                let mut skip_commit = false;
                 if let LockResult::Changed(Some(previous), lock) = &mut result {
                     lock.rewrite_urls_from(previous);
+                    if lock == previous {
+                        skip_commit = true;
+                    }
                 }
 
                 // If the lockfile changed, write it to disk.
-                if !matches!(self.mode, LockMode::DryRun(_)) {
+                if !matches!(self.mode, LockMode::DryRun(_)) && !skip_commit {
                     if let LockResult::Changed(_, lock) = &result {
                         target.commit(lock).await?;
                     }
