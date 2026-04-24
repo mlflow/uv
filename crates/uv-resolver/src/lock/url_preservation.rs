@@ -29,9 +29,7 @@ use uv_distribution_types::UrlString;
 use uv_normalize::PackageName;
 use uv_pep440::Version;
 
-use super::{
-    Lock, Package, PackageId, RegistrySource, Source, SourceDist, Wheel, WheelWireSource,
-};
+use super::{Lock, Package, PackageId, RegistrySource, Source, SourceDist, Wheel, WheelWireSource};
 
 impl Lock {
     /// Preserve URLs from a previous lockfile for packages whose (name, version)
