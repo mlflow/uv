@@ -1,11 +1,10 @@
-# fork: publish a rolling release of uv binaries (linux x86_64, macOS aarch64)
-# on every push to main. Assets on the `fork-latest` release are overwritten.
+# fork: publish per-PR uv binaries (linux x86_64, macOS aarch64).
+# Each PR has one release tagged `pr-<number>`; assets overwrite on each push.
 name: Fork release
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -15,7 +14,6 @@ env:
   CARGO_NET_RETRY: 10
   CARGO_TERM_COLOR: always
   RUSTUP_MAX_RETRIES: 10
-  RELEASE_TAG: fork-latest
 
 jobs:
   build-linux-x86_64:
@@ -61,11 +59,14 @@ jobs:
           retention-days: 1
 
   publish-release:
-    name: Publish rolling release
+    name: Publish PR release
     needs: [build-linux-x86_64, build-macos-aarch64]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,32 +75,26 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Collect metadata
-        id: meta
-        run: |
-          SHA_SHORT="$(git rev-parse --short HEAD)"
-          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
-          # Find the PR associated with this commit (if any).
-          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$GITHUB_SHA" --state merged --json number --jq '.[0].number // empty')"
-          if [ -z "$PR_NUMBER" ]; then
-            # Fallback: parse "Merge pull request #N" from the commit message.
-            PR_NUMBER="$(git log -1 --pretty=%s | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
-          fi
-          echo "pr_number=${PR_NUMBER:-}" >> "$GITHUB_OUTPUT"
       - name: Write release notes
+        id: notes
         run: |
-          cat > RELEASE_NOTES.md <<'EOF'
-          # uv (mlflow fork) — rolling build
+          TAG="pr-${PR_NUMBER}"
+          SHA_SHORT="$(echo "$PR_HEAD_SHA" | cut -c1-7)"
+          DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
+          cat > RELEASE_NOTES.md <<EOF
+          # uv (mlflow fork) — PR #${PR_NUMBER}
 
-          This release is rebuilt from `main` on every push. Assets are overwritten in place.
+          Binaries built from [PR #${PR_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}).
+          Assets are overwritten on every push to the PR.
 
-          - Commit: `__SHA_SHORT__` (`__SHA__`)
-          - Latest PR: __PR_LINE__
-          - Built: __DATE__
+          - Commit: \`${SHA_SHORT}\` (\`${PR_HEAD_SHA}\`)
+          - Built: ${DATE}
 
           ## Fork behavior
 
-          This fork preserves registry, sdist, and wheel URLs in `uv.lock` across re-locks
+          This fork preserves registry, sdist, and wheel URLs in \`uv.lock\` across re-locks
           when the package name and version are unchanged. See
           [astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349).
 
@@ -107,47 +102,37 @@ jobs:
 
           ### Linux (x86_64)
 
-          ```bash
-          curl -L -o uv.tar.gz \
-            https://github.com/__REPO__/releases/download/fork-latest/uv-x86_64-unknown-linux-gnu.tar.gz
+          \`\`\`bash
+          curl -L -o uv.tar.gz \\
+            ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/uv-x86_64-unknown-linux-gnu.tar.gz
           tar -xzf uv.tar.gz
-          install -m 0755 uv uvx "$HOME/.local/bin/"
-          ```
+          install -m 0755 uv uvx "\$HOME/.local/bin/"
+          \`\`\`
 
           ### macOS (Apple Silicon)
 
-          ```bash
-          curl -L -o uv.tar.gz \
-            https://github.com/__REPO__/releases/download/fork-latest/uv-aarch64-apple-darwin.tar.gz
+          \`\`\`bash
+          curl -L -o uv.tar.gz \\
+            ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/uv-aarch64-apple-darwin.tar.gz
           tar -xzf uv.tar.gz
-          install -m 0755 uv uvx "$HOME/.local/bin/"
+          install -m 0755 uv uvx "\$HOME/.local/bin/"
           # Clear the quarantine flag added by Safari/curl on downloaded binaries:
-          xattr -d com.apple.quarantine "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" 2>/dev/null || true
-          ```
+          xattr -d com.apple.quarantine "\$HOME/.local/bin/uv" "\$HOME/.local/bin/uvx" 2>/dev/null || true
+          \`\`\`
 
-          Make sure `$HOME/.local/bin` is on your `PATH`.
+          Make sure \`\$HOME/.local/bin\` is on your \`PATH\`.
           EOF
-          if [ -n "${{ steps.meta.outputs.pr_number }}" ]; then
-            PR_LINE="#${{ steps.meta.outputs.pr_number }}"
-          else
-            PR_LINE="(none found for this commit)"
-          fi
-          sed -i "s|__SHA_SHORT__|${{ steps.meta.outputs.sha_short }}|g" RELEASE_NOTES.md
-          sed -i "s|__SHA__|$GITHUB_SHA|g" RELEASE_NOTES.md
-          sed -i "s|__PR_LINE__|$PR_LINE|g" RELEASE_NOTES.md
-          sed -i "s|__REPO__|$GITHUB_REPOSITORY|g" RELEASE_NOTES.md
-          sed -i "s|__DATE__|$(date -u +'%Y-%m-%dT%H:%M:%SZ')|g" RELEASE_NOTES.md
-      - name: Upsert rolling release
+      - name: Upsert PR release
         run: |
-          TAG="$RELEASE_TAG"
-          # Delete the existing release (if any) so we can replace assets cleanly.
+          TAG="${{ steps.notes.outputs.tag }}"
+          SHA_SHORT="${{ steps.notes.outputs.sha_short }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "uv fork (rolling) — ${{ steps.meta.outputs.sha_short }}" \
+            --target "$PR_HEAD_SHA" \
+            --title "uv — PR #${PR_NUMBER} (${SHA_SHORT})" \
             --notes-file RELEASE_NOTES.md \
             dist/uv-x86_64-unknown-linux-gnu.tar.gz \
             dist/uv-aarch64-apple-darwin.tar.gz
