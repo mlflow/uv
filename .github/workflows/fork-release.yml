@@ -132,7 +132,7 @@ jobs:
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$PR_HEAD_SHA" \
-            --title "uv — PR #${PR_NUMBER} (${SHA_SHORT})" \
+            --title "$TAG" \
             --notes-file RELEASE_NOTES.md \
             dist/uv-x86_64-unknown-linux-gnu.tar.gz \
             dist/uv-aarch64-apple-darwin.tar.gz
