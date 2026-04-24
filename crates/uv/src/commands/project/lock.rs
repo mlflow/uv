@@ -434,7 +434,8 @@ impl<'env> LockOperation<'env> {
                 };
 
                 // Perform the lock operation.
-                let result = Box::pin(do_lock(
+                // fork: was `let result` — now mutable for URL preservation below.
+                let mut result = Box::pin(do_lock(
                     target,
                     interpreter,
                     existing,
@@ -451,6 +452,11 @@ impl<'env> LockOperation<'env> {
                     self.preview,
                 ))
                 .await?;
+
+                // fork: preserve URLs across re-locks; see issue astral-sh/uv#6349.
+                if let LockResult::Changed(Some(previous), lock) = &mut result {
+                    lock.rewrite_urls_from(previous);
+                }
 
                 // If the lockfile changed, write it to disk.
                 if !matches!(self.mode, LockMode::DryRun(_)) {
