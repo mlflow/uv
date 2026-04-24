@@ -72,6 +72,8 @@ mod export;
 mod installable;
 mod map;
 mod tree;
+// fork: preserve URLs across re-locks; see issue astral-sh/uv#6349.
+mod url_preservation;
 
 /// The current version of the lockfile format.
 pub const VERSION: u32 = 1;

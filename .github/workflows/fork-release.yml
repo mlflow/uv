@@ -1,0 +1,153 @@
+# fork: publish a rolling release of uv binaries (linux x86_64, macOS aarch64)
+# on every push to main. Assets on the `fork-latest` release are overwritten.
+name: Fork release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUSTUP_MAX_RETRIES: 10
+  RELEASE_TAG: fork-latest
+
+jobs:
+  build-linux-x86_64:
+    name: Build linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+      - name: Build uv + uvx
+        run: cargo build --profile release --bin uv --bin uvx
+      - name: Package tarball
+        run: |
+          mkdir -p dist
+          tar -czvf dist/uv-x86_64-unknown-linux-gnu.tar.gz \
+            -C target/release uv uvx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uv-x86_64-unknown-linux-gnu
+          path: dist/uv-x86_64-unknown-linux-gnu.tar.gz
+          retention-days: 1
+
+  build-macos-aarch64:
+    name: Build macOS aarch64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+      - name: Build uv + uvx
+        run: cargo build --profile release --bin uv --bin uvx
+      - name: Package tarball
+        run: |
+          mkdir -p dist
+          tar -czvf dist/uv-aarch64-apple-darwin.tar.gz \
+            -C target/release uv uvx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uv-aarch64-apple-darwin
+          path: dist/uv-aarch64-apple-darwin.tar.gz
+          retention-days: 1
+
+  publish-release:
+    name: Publish rolling release
+    needs: [build-linux-x86_64, build-macos-aarch64]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Collect metadata
+        id: meta
+        run: |
+          SHA_SHORT="$(git rev-parse --short HEAD)"
+          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
+          # Find the PR associated with this commit (if any).
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$GITHUB_SHA" --state merged --json number --jq '.[0].number // empty')"
+          if [ -z "$PR_NUMBER" ]; then
+            # Fallback: parse "Merge pull request #N" from the commit message.
+            PR_NUMBER="$(git log -1 --pretty=%s | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
+          fi
+          echo "pr_number=${PR_NUMBER:-}" >> "$GITHUB_OUTPUT"
+      - name: Write release notes
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          # uv (mlflow fork) — rolling build
+
+          This release is rebuilt from `main` on every push. Assets are overwritten in place.
+
+          - Commit: `__SHA_SHORT__` (`__SHA__`)
+          - Latest PR: __PR_LINE__
+          - Built: __DATE__
+
+          ## Fork behavior
+
+          This fork preserves registry, sdist, and wheel URLs in `uv.lock` across re-locks
+          when the package name and version are unchanged. See
+          [astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349).
+
+          ## Install
+
+          ### Linux (x86_64)
+
+          ```bash
+          curl -L -o uv.tar.gz \
+            https://github.com/__REPO__/releases/download/fork-latest/uv-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf uv.tar.gz
+          install -m 0755 uv uvx "$HOME/.local/bin/"
+          ```
+
+          ### macOS (Apple Silicon)
+
+          ```bash
+          curl -L -o uv.tar.gz \
+            https://github.com/__REPO__/releases/download/fork-latest/uv-aarch64-apple-darwin.tar.gz
+          tar -xzf uv.tar.gz
+          install -m 0755 uv uvx "$HOME/.local/bin/"
+          # Clear the quarantine flag added by Safari/curl on downloaded binaries:
+          xattr -d com.apple.quarantine "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" 2>/dev/null || true
+          ```
+
+          Make sure `$HOME/.local/bin` is on your `PATH`.
+          EOF
+          if [ -n "${{ steps.meta.outputs.pr_number }}" ]; then
+            PR_LINE="#${{ steps.meta.outputs.pr_number }}"
+          else
+            PR_LINE="(none found for this commit)"
+          fi
+          sed -i "s|__SHA_SHORT__|${{ steps.meta.outputs.sha_short }}|g" RELEASE_NOTES.md
+          sed -i "s|__SHA__|$GITHUB_SHA|g" RELEASE_NOTES.md
+          sed -i "s|__PR_LINE__|$PR_LINE|g" RELEASE_NOTES.md
+          sed -i "s|__REPO__|$GITHUB_REPOSITORY|g" RELEASE_NOTES.md
+          sed -i "s|__DATE__|$(date -u +'%Y-%m-%dT%H:%M:%SZ')|g" RELEASE_NOTES.md
+      - name: Upsert rolling release
+        run: |
+          TAG="$RELEASE_TAG"
+          # Delete the existing release (if any) so we can replace assets cleanly.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "uv fork (rolling) — ${{ steps.meta.outputs.sha_short }}" \
+            --notes-file RELEASE_NOTES.md \
+            dist/uv-x86_64-unknown-linux-gnu.tar.gz \
+            dist/uv-aarch64-apple-darwin.tar.gz
