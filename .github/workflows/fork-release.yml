@@ -107,19 +107,21 @@ jobs:
           ### Linux (x86_64)
 
           \`\`\`bash
-          curl -L -o uv.tar.gz \\
+          tmpdir="\$(mktemp -d)" && trap "rm -rf \"\$tmpdir\"" EXIT
+          curl -L -o "\$tmpdir/uv.tar.gz" \\
             ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/uv-x86_64-unknown-linux-gnu.tar.gz
-          tar -xzf uv.tar.gz
-          install -m 0755 uv uvx "\$HOME/.local/bin/"
+          tar -xzf "\$tmpdir/uv.tar.gz" -C "\$tmpdir"
+          install -m 0755 "\$tmpdir/uv" "\$tmpdir/uvx" "\$HOME/.local/bin/"
           \`\`\`
 
           ### macOS (Apple Silicon)
 
           \`\`\`bash
-          curl -L -o uv.tar.gz \\
+          tmpdir="\$(mktemp -d)" && trap "rm -rf \"\$tmpdir\"" EXIT
+          curl -L -o "\$tmpdir/uv.tar.gz" \\
             ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/uv-aarch64-apple-darwin.tar.gz
-          tar -xzf uv.tar.gz
-          install -m 0755 uv uvx "\$HOME/.local/bin/"
+          tar -xzf "\$tmpdir/uv.tar.gz" -C "\$tmpdir"
+          install -m 0755 "\$tmpdir/uv" "\$tmpdir/uvx" "\$HOME/.local/bin/"
           # Clear the quarantine flag added by Safari/curl on downloaded binaries:
           xattr -d com.apple.quarantine "\$HOME/.local/bin/uv" "\$HOME/.local/bin/uvx" 2>/dev/null || true
           \`\`\`

@@ -85,6 +85,14 @@ impl Lock {
             copy_sdist_url(previous_package.sdist.as_ref(), new_package.sdist.as_mut());
             copy_wheel_urls(&previous_package.wheels, &mut new_package.wheels);
         }
+
+        // `Lock.by_id` is a cached `PackageId → index` map built once during
+        // `Lock::new`. Since we just mutated `Package.id.source` on some entries,
+        // the cached keys are stale and `find_by_id` would panic. Rebuild it.
+        self.by_id.clear();
+        for (index, package) in self.packages.iter().enumerate() {
+            self.by_id.insert(package.id.clone(), index);
+        }
     }
 }
 
@@ -269,6 +277,21 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
             "rewritten lock should match previous lock byte-for-byte\n\
              --- new ---\n{new_rendered}\n--- previous ---\n{previous_rendered}"
         );
+
+        // `find_by_id` relies on the cached `Lock.by_id` map; if we forgot to
+        // rebuild it after mutating `Package.id.source` the lookup would panic
+        // (as `installable.rs:1464` did in practice). Walk every dependency
+        // and resolve its package to ensure no stale keys remain.
+        for package in &new.packages {
+            for dep in &package.dependencies {
+                let resolved = new.find_by_id(&dep.package_id);
+                assert_eq!(
+                    resolved.id.name, dep.package_id.name,
+                    "find_by_id returned wrong package for dependency {}",
+                    dep.package_id.name
+                );
+            }
+        }
     }
 
     #[test]
