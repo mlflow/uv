@@ -18,6 +18,7 @@
 use std::collections::BTreeSet;
 
 use uv_distribution_types::UrlString;
+use uv_small_str::SmallString;
 
 use super::{Lock, PackageId, RegistrySource, Source};
 
@@ -52,8 +53,8 @@ fn parse_proxy_mappings() -> Vec<ProxyMapping> {
                 return None;
             }
             Some(ProxyMapping {
-                canonical: UrlString::from(canonical),
-                proxy: UrlString::from(proxy),
+                canonical: UrlString::new(SmallString::from(canonical)),
+                proxy: UrlString::new(SmallString::from(proxy)),
             })
         })
         .collect()
