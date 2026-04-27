@@ -455,13 +455,23 @@ impl<'env> LockOperation<'env> {
 
                 // fork: rewrite proxy registry URLs to their canonical
                 // counterparts based on UV_INDEX_PROXIES; see astral-sh/uv#6349.
-                if let LockResult::Changed(previous, lock) = &mut result {
-                    lock.rewrite_proxy_urls();
-                    if previous.as_ref().is_some_and(|prev| prev == lock) {
-                        // URL rewrite made the new lock identical to the
-                        // previous one — skip the write to avoid touching mtime.
-                    } else if !matches!(self.mode, LockMode::DryRun(_)) {
-                        target.commit(lock).await?;
+                match &mut result {
+                    LockResult::Changed(previous, lock) => {
+                        lock.rewrite_proxy_urls();
+                        if previous.as_ref().is_some_and(|prev| prev == lock) {
+                            // URL rewrite made the new lock identical to the
+                            // previous one — skip the write to avoid touching mtime.
+                        } else if !matches!(self.mode, LockMode::DryRun(_)) {
+                            target.commit(lock).await?;
+                        }
+                    }
+                    LockResult::Unchanged(lock) => {
+                        let before = lock.to_toml()?;
+                        lock.rewrite_proxy_urls();
+                        let after = lock.to_toml()?;
+                        if before != after && !matches!(self.mode, LockMode::DryRun(_)) {
+                            target.commit(lock).await?;
+                        }
                     }
                 }
 
