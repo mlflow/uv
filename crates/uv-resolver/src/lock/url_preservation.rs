@@ -34,7 +34,23 @@ use super::{Lock, Package, PackageId, RegistrySource, Source, SourceDist, Wheel,
 impl Lock {
     /// Preserve URLs from a previous lockfile for packages whose (name, version)
     /// are unchanged. See module-level docs for the matching rules.
+    ///
+    /// For newly added packages (not present in `previous`), the canonical
+    /// registry URL is inferred from the previous lockfile and applied so that
+    /// all registry packages use a consistent URL, even when the current
+    /// `UV_DEFAULT_INDEX` points at a different mirror.
     pub fn rewrite_urls_from(&mut self, previous: &Self) {
+        // Determine the canonical registry URL from the previous lock. We pick
+        // the first registry URL we find — after URL preservation has been
+        // running, all packages share the same registry URL.
+        let canonical_registry: Option<&UrlString> = previous.packages.iter().find_map(|package| {
+            if let Source::Registry(RegistrySource::Url(url)) = &package.id.source {
+                Some(url)
+            } else {
+                None
+            }
+        });
+
         // Build a map of (name, version) → preserved registry URL from the
         // previous lock. These are the URLs we want every PackageId with the
         // same (name, version) to use after rewriting.
@@ -54,19 +70,35 @@ impl Lock {
         // inside a package's dependencies, optional dependencies, and
         // dependency groups — all must stay in sync so downstream HashMap
         // lookups (e.g. in `installable.rs`) still work.
+        //
+        // For packages not found in `preserved_registry`, fall back to the
+        // canonical registry URL so newly added packages also get the
+        // consistent URL.
         for package in &mut self.packages {
-            apply_preserved_registry(&mut package.id, &preserved_registry);
+            apply_preserved_registry(&mut package.id, &preserved_registry, canonical_registry);
             for dep in &mut package.dependencies {
-                apply_preserved_registry(&mut dep.package_id, &preserved_registry);
+                apply_preserved_registry(
+                    &mut dep.package_id,
+                    &preserved_registry,
+                    canonical_registry,
+                );
             }
             for deps in package.optional_dependencies.values_mut() {
                 for dep in deps {
-                    apply_preserved_registry(&mut dep.package_id, &preserved_registry);
+                    apply_preserved_registry(
+                        &mut dep.package_id,
+                        &preserved_registry,
+                        canonical_registry,
+                    );
                 }
             }
             for deps in package.dependency_groups.values_mut() {
                 for dep in deps {
-                    apply_preserved_registry(&mut dep.package_id, &preserved_registry);
+                    apply_preserved_registry(
+                        &mut dep.package_id,
+                        &preserved_registry,
+                        canonical_registry,
+                    );
                 }
             }
         }
@@ -80,6 +112,9 @@ impl Lock {
         for new_package in &mut self.packages {
             let key = (&new_package.id.name, new_package.id.version.as_ref());
             let Some(previous_package) = previous_by_key.get(&key).copied() else {
+                // fork: for newly added packages, we can't preserve sdist/wheel
+                // file URLs because we don't know what they'd be on the canonical
+                // index. The registry URL is still normalized above.
                 continue;
             };
             copy_sdist_url(previous_package.sdist.as_ref(), new_package.sdist.as_mut());
@@ -99,6 +134,7 @@ impl Lock {
 fn apply_preserved_registry(
     id: &mut PackageId,
     preserved: &FxHashMap<(&PackageName, Option<&Version>), &UrlString>,
+    canonical: Option<&UrlString>,
 ) {
     let Source::Registry(RegistrySource::Url(url)) = &mut id.source else {
         return;
@@ -106,6 +142,9 @@ fn apply_preserved_registry(
     let key = (&id.name, id.version.as_ref());
     if let Some(preserved_url) = preserved.get(&key) {
         *url = (*preserved_url).clone();
+    } else if let Some(canonical_url) = canonical {
+        // Newly added package — normalize to the canonical registry URL.
+        *url = canonical_url.clone();
     }
 }
 
@@ -376,6 +415,53 @@ requires-python = ">=3.12"
         assert!(
             rendered.contains(r#"registry = "https://mirror.example.com/simple""#),
             "registry URL should be untouched when previous has no match:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn newly_added_package_uses_canonical_registry() {
+        // Previous lock has iniconfig at pypi.org.
+        let previous = make_lock(
+            "https://pypi.org/simple",
+            "https://files.pythonhosted.org/packages/iniconfig",
+        );
+        // New lock has iniconfig (via mirror) plus a newly added package "pytest".
+        let data = r#"
+version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "iniconfig"
+version = "2.0.0"
+source = { registry = "https://mirror.example.com/simple" }
+sdist = { url = "https://mirror.example.com/files/iniconfig-2.0.0.tar.gz", hash = "sha256:2d91e135bf72d31a410b17c16da610a82cb55f6b0477d1a902134b24a455b8b3", size = 4646 }
+wheels = [{ url = "https://mirror.example.com/files/iniconfig-2.0.0-py3-none-any.whl", hash = "sha256:b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374", size = 5892 }]
+
+[[package]]
+name = "pytest"
+version = "8.0.0"
+source = { registry = "https://mirror.example.com/simple" }
+sdist = { url = "https://mirror.example.com/files/pytest-8.0.0.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000001", size = 1000 }
+wheels = [{ url = "https://mirror.example.com/files/pytest-8.0.0-py3-none-any.whl", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000002", size = 2000 }]
+"#;
+        let mut new: Lock = toml::from_str(data).expect("parse lock");
+
+        new.rewrite_urls_from(&previous);
+
+        let rendered = new.to_toml().expect("serialize lock");
+        // The newly added pytest should use the canonical pypi.org registry,
+        // not the mirror URL. File URLs for new packages are left as-is since
+        // we can't infer canonical file URLs.
+        assert_eq!(
+            rendered
+                .matches(r#"registry = "https://pypi.org/simple""#)
+                .count(),
+            2,
+            "both packages should use the canonical registry URL:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains(r#"registry = "https://mirror.example.com/simple""#),
+            "no mirror registry URLs should remain:\n{rendered}"
         );
     }
 }
