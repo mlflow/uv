@@ -550,6 +550,9 @@ impl<'a> IndexUrls {
                 .iter()
                 .filter(move |index| index.name.as_ref().is_none_or(|name| seen.insert(name)))
                 .find(|index| index.default)
+                // fork: prefer proxy-resolved default index;
+                // see astral-sh/uv#6349.
+                .or_else(|| DEFAULT_INDEX_PROXIED.as_ref())
                 .or_else(|| Some(&DEFAULT_INDEX))
         }
     }
