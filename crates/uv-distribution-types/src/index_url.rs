@@ -26,6 +26,32 @@ static DEFAULT_INDEX: LazyLock<Index> = LazyLock::new(|| {
     ))))
 });
 
+// fork: default index resolved through UV_INDEX_PROXIES so that
+// build-system.requires resolution uses the proxy; see astral-sh/uv#6349.
+static DEFAULT_INDEX_PROXIED: LazyLock<Option<Index>> = LazyLock::new(|| {
+    let value = std::env::var("UV_INDEX_PROXIES").ok()?;
+    let pypi = PYPI_URL.to_string();
+    for entry in value.split(',') {
+        let entry = entry.trim();
+        let delimiter_pos = entry
+            .find(":https://")
+            .or_else(|| entry.find(":http://"))
+            .filter(|&pos| pos > 0)?;
+        let canonical = entry[..delimiter_pos].trim();
+        let proxy = entry[delimiter_pos + 1..].trim();
+        if canonical == pypi {
+            let proxy_url = DisplaySafeUrl::parse(proxy).ok()?;
+            tracing::debug!(
+                "Resolving default index `{canonical}` to proxy `{proxy}` for build resolution"
+            );
+            return Some(Index::from_index_url(IndexUrl::Url(Arc::new(
+                VerbatimUrl::from_url(proxy_url),
+            ))));
+        }
+    }
+    None
+});
+
 /// The URL of an index to use for fetching packages (e.g., PyPI).
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum IndexUrl {
@@ -313,6 +339,10 @@ impl<'a> IndexLocations {
                 .iter()
                 .filter(move |index| index.name.as_ref().is_none_or(|name| seen.insert(name)))
                 .find(|index| index.default)
+                // fork: prefer proxy-resolved default index so that
+                // build-system.requires resolution uses the proxy;
+                // see astral-sh/uv#6349.
+                .or_else(|| DEFAULT_INDEX_PROXIED.as_ref())
                 .or_else(|| Some(&DEFAULT_INDEX))
         }
     }
