@@ -72,7 +72,7 @@ mod export;
 mod installable;
 mod map;
 mod tree;
-// fork: rewrite proxy registry URLs via UV_PYPI_PROXIES; see astral-sh/uv#6349.
+// fork: rewrite proxy registry URLs via UV_INDEX_PROXIES; see astral-sh/uv#6349.
 mod url_preservation;
 
 /// The current version of the lockfile format.
@@ -1808,7 +1808,7 @@ impl Lock {
                 .collect::<BTreeSet<_>>()
         });
 
-        // fork: add canonical URLs from UV_PYPI_PROXIES so that the
+        // fork: add canonical URLs from UV_INDEX_PROXIES so that the
         // satisfies check recognizes them as valid remote indexes.
         if let Some(remotes) = remotes.as_mut() {
             url_preservation::canonical_urls(remotes);
