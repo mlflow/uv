@@ -15,6 +15,8 @@
 //! Example:
 //!   UV_PYPI_PROXIES=https://pypi.org/simple:https://pypi-proxy.dev.databricks.com/simple
 
+use std::collections::BTreeSet;
+
 use uv_distribution_types::UrlString;
 
 use super::{Lock, PackageId, RegistrySource, Source};
@@ -55,6 +57,15 @@ fn parse_proxy_mappings() -> Vec<ProxyMapping> {
             })
         })
         .collect()
+}
+
+/// Add canonical URLs from `UV_PYPI_PROXIES` to the set of known remote
+/// indexes so that `satisfies()` recognizes lockfile entries written with
+/// canonical URLs as valid.
+pub(super) fn canonical_urls(remotes: &mut BTreeSet<UrlString>) {
+    for mapping in parse_proxy_mappings() {
+        remotes.insert(mapping.canonical);
+    }
 }
 
 impl Lock {

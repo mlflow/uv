@@ -72,7 +72,7 @@ mod export;
 mod installable;
 mod map;
 mod tree;
-// fork: preserve URLs across re-locks; see issue astral-sh/uv#6349.
+// fork: rewrite proxy registry URLs via UV_PYPI_PROXIES; see astral-sh/uv#6349.
 mod url_preservation;
 
 /// The current version of the lockfile format.
@@ -1826,21 +1826,24 @@ impl Lock {
         }
 
         // Collect the set of available indexes (both `--index-url` and `--find-links` entries).
-        // fork: remote index collection commented out — URL preservation means the
-        // lockfile intentionally keeps previous registry URLs that may not match the
-        // current index configuration.
-        // let mut remotes = indexes.map(|locations| {
-        //     locations
-        //         .allowed_indexes()
-        //         .into_iter()
-        //         .filter_map(|index| match index.url() {
-        //             IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-        //                 Some(UrlString::from(index.url().without_credentials().as_ref()))
-        //             }
-        //             IndexUrl::Path(_) => None,
-        //         })
-        //         .collect::<BTreeSet<_>>()
-        // });
+        let mut remotes = indexes.map(|locations| {
+            locations
+                .allowed_indexes()
+                .into_iter()
+                .filter_map(|index| match index.url() {
+                    IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+                        Some(UrlString::from(index.url().without_credentials().as_ref()))
+                    }
+                    IndexUrl::Path(_) => None,
+                })
+                .collect::<BTreeSet<_>>()
+        });
+
+        // fork: add canonical URLs from UV_PYPI_PROXIES so that the
+        // satisfies check recognizes them as valid remote indexes.
+        if let Some(remotes) = remotes.as_mut() {
+            url_preservation::canonical_urls(remotes);
+        }
 
         let mut locals = indexes.map(|locations| {
             locations
@@ -1887,23 +1890,21 @@ impl Lock {
                 index: Some(index), ..
             } = &requirement.source
             {
-                // fork: remote index insertion commented out — see note above.
-                // match &index.url {
-                //     IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-                //         if let Some(remotes) = remotes.as_mut() {
-                //             remotes.insert(UrlString::from(
-                //                 index.url().without_credentials().as_ref(),
-                //             ));
-                //         }
-                //     }
-                //     IndexUrl::Path(url) => { ... }
-                // }
-                if let IndexUrl::Path(url) = &index.url {
-                    if let Some(locals) = locals.as_mut() {
-                        if let Some(path) = url.to_file_path().ok().and_then(|path| {
-                            try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
-                        }) {
-                            locals.insert(path.into_boxed_path());
+                match &index.url {
+                    IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+                        if let Some(remotes) = remotes.as_mut() {
+                            remotes.insert(UrlString::from(
+                                index.url().without_credentials().as_ref(),
+                            ));
+                        }
+                    }
+                    IndexUrl::Path(url) => {
+                        if let Some(locals) = locals.as_mut() {
+                            if let Some(path) = url.to_file_path().ok().and_then(|path| {
+                                try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
+                            }) {
+                                locals.insert(path.into_boxed_path());
+                            }
                         }
                     }
                 }
@@ -1960,13 +1961,20 @@ impl Lock {
             // If the lockfile references an index that was not provided, we can't validate it.
             if let Source::Registry(index) = &package.id.source {
                 match index {
-                    // fork: skip the remote-index URL check. UV_PYPI_PROXIES
-                    // rewrites proxy registry URLs to canonical counterparts in
-                    // the lockfile, which won't match the current
-                    // UV_DEFAULT_INDEX. Without this, `satisfies` returns
-                    // `MissingRemoteIndex` on every run, defeating the lock
-                    // cache and forcing a full re-resolve.
-                    RegistrySource::Url(_) => {}
+                    RegistrySource::Url(url) => {
+                        if remotes
+                            .as_ref()
+                            .is_some_and(|remotes| !remotes.contains(url))
+                        {
+                            let name = &package.id.name;
+                            let version = &package
+                                .id
+                                .version
+                                .as_ref()
+                                .expect("version for registry source");
+                            return Ok(SatisfiesResult::MissingRemoteIndex(name, version, url));
+                        }
+                    }
                     RegistrySource::Path(path) => {
                         if locals.as_ref().is_some_and(|locals| !locals.contains(path)) {
                             let name = &package.id.name;
@@ -2256,32 +2264,21 @@ impl Lock {
                     index: Some(index), ..
                 } = &requirement.source
                 {
-                    // fork: remote index insertion commented out — URL preservation
-                    // keeps previous registry URLs, so we don't need to track remotes.
-                    // match &index.url {
-                    //     IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-                    //         if let Some(remotes) = remotes.as_mut() {
-                    //             remotes.insert(UrlString::from(
-                    //                 index.url().without_credentials().as_ref(),
-                    //             ));
-                    //         }
-                    //     }
-                    //     IndexUrl::Path(url) => {
-                    //         if let Some(locals) = locals.as_mut() {
-                    //             if let Some(path) = url.to_file_path().ok().and_then(|path| {
-                    //                 try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
-                    //             }) {
-                    //                 locals.insert(path.into_boxed_path());
-                    //             }
-                    //         }
-                    //     }
-                    // }
-                    if let IndexUrl::Path(url) = &index.url {
-                        if let Some(locals) = locals.as_mut() {
-                            if let Some(path) = url.to_file_path().ok().and_then(|path| {
-                                try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
-                            }) {
-                                locals.insert(path.into_boxed_path());
+                    match &index.url {
+                        IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+                            if let Some(remotes) = remotes.as_mut() {
+                                remotes.insert(UrlString::from(
+                                    index.url().without_credentials().as_ref(),
+                                ));
+                            }
+                        }
+                        IndexUrl::Path(url) => {
+                            if let Some(locals) = locals.as_mut() {
+                                if let Some(path) = url.to_file_path().ok().and_then(|path| {
+                                    try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
+                                }) {
+                                    locals.insert(path.into_boxed_path());
+                                }
                             }
                         }
                     }
