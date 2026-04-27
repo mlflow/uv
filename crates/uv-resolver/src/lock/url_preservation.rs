@@ -17,7 +17,7 @@
 
 use std::collections::BTreeSet;
 
-use tracing::debug;
+use tracing::{debug, trace};
 use uv_distribution_types::UrlString;
 use uv_small_str::SmallString;
 
@@ -79,7 +79,7 @@ pub(super) fn canonical_urls(remotes: &mut BTreeSet<UrlString>) {
 pub(super) fn proxy_url(url: &UrlString) -> UrlString {
     for mapping in parse_proxy_mappings() {
         if *url == mapping.canonical {
-            debug!(
+            trace!(
                 "Resolving canonical registry URL `{url}` to proxy `{}`",
                 mapping.proxy
             );
@@ -96,6 +96,13 @@ impl Lock {
         let mappings = parse_proxy_mappings();
         if mappings.is_empty() {
             return;
+        }
+
+        for mapping in &mappings {
+            debug!(
+                "Rewriting proxy registry URLs: `{}` → `{}`",
+                mapping.proxy, mapping.canonical
+            );
         }
 
         for package in &mut self.packages {
@@ -130,7 +137,7 @@ fn apply_proxy_mapping(id: &mut PackageId, mappings: &[ProxyMapping]) {
     };
     for mapping in mappings {
         if *url == mapping.proxy {
-            debug!(
+            trace!(
                 "Rewriting proxy registry URL `{url}` to canonical `{}`",
                 mapping.canonical
             );
