@@ -3278,8 +3278,11 @@ impl Package {
                     zstd: None,
                 });
 
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
 
                 let reg_dist = RegistrySourceDist {
@@ -3574,8 +3577,11 @@ impl Package {
     pub fn index(&self, root: &Path) -> Result<Option<IndexUrl>, LockError> {
         match &self.id.source {
             Source::Registry(RegistrySource::Url(url)) => {
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
                 Ok(Some(index))
             }
@@ -5062,8 +5068,11 @@ impl Wheel {
                         })
                         .map(Box::new),
                 });
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
                 Ok(RegistryBuiltWheel {
                     filename,
