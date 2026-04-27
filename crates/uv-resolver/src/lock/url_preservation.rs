@@ -69,6 +69,21 @@ pub(super) fn canonical_urls(remotes: &mut BTreeSet<UrlString>) {
     }
 }
 
+/// Resolve a canonical registry URL back to its proxy URL using
+/// `UV_INDEX_PROXIES`.  This is the reverse of [`Lock::rewrite_proxy_urls`]:
+/// the lockfile stores canonical URLs, but at install time we need to fetch
+/// from the proxy that is actually reachable.
+///
+/// Returns the original URL unchanged if no mapping matches.
+pub(super) fn proxy_url(url: &UrlString) -> UrlString {
+    for mapping in parse_proxy_mappings() {
+        if *url == mapping.canonical {
+            return mapping.proxy;
+        }
+    }
+    url.clone()
+}
+
 impl Lock {
     /// Rewrite proxy registry URLs to their canonical counterparts based on
     /// the `UV_INDEX_PROXIES` environment variable.
@@ -119,6 +134,8 @@ fn apply_proxy_mapping(id: &mut PackageId, mappings: &[ProxyMapping]) {
 #[cfg(test)]
 mod tests {
     use super::super::Lock;
+    use uv_distribution_types::UrlString;
+    use uv_small_str::SmallString;
 
     fn make_lock(registry: &str, file_prefix: &str) -> Lock {
         let data = format!(
@@ -265,5 +282,45 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
             "non-matching registry URL should be unchanged:\n{rendered}"
         );
         std::env::remove_var("UV_INDEX_PROXIES");
+    }
+
+    #[test]
+    fn proxy_url_resolves_canonical_to_proxy() {
+        std::env::set_var(
+            "UV_INDEX_PROXIES",
+            "https://pypi.org/simple:https://mirror.example.com/simple",
+        );
+
+        let canonical = UrlString::new(SmallString::from("https://pypi.org/simple"));
+        let resolved = super::proxy_url(&canonical);
+        assert_eq!(
+            resolved.to_string(),
+            "https://mirror.example.com/simple",
+            "canonical URL should resolve to proxy URL"
+        );
+
+        // Non-matching URL should be returned unchanged.
+        let other = UrlString::new(SmallString::from("https://other.example.com/simple"));
+        let resolved = super::proxy_url(&other);
+        assert_eq!(
+            resolved.to_string(),
+            "https://other.example.com/simple",
+            "non-matching URL should be returned unchanged"
+        );
+
+        std::env::remove_var("UV_INDEX_PROXIES");
+    }
+
+    #[test]
+    fn proxy_url_noop_without_env() {
+        std::env::remove_var("UV_INDEX_PROXIES");
+
+        let url = UrlString::new(SmallString::from("https://pypi.org/simple"));
+        let resolved = super::proxy_url(&url);
+        assert_eq!(
+            resolved.to_string(),
+            "https://pypi.org/simple",
+            "URL should be unchanged without env var"
+        );
     }
 }
