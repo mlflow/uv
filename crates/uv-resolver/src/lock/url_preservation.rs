@@ -13,7 +13,7 @@
 //! Format: `<canonical>:<proxy>,<canonical2>:<proxy2>`
 //!
 //! Example:
-//!   UV_PYPI_PROXIES=https://pypi.org/simple:https://pypi-proxy.dev.databricks.com/simple
+//!   UV_PYPI_PROXIES=https://pypi.org/simple:https://pypi-proxy.example.com/simple
 
 use std::collections::BTreeSet;
 
