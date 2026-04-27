@@ -453,20 +453,14 @@ impl<'env> LockOperation<'env> {
                 ))
                 .await?;
 
-                // fork: preserve URLs across re-locks; see issue astral-sh/uv#6349.
-                // If URL preservation makes the new lock equal to the previous one,
-                // skip the write so we don't touch uv.lock's mtime.
-                let mut skip_commit = false;
-                if let LockResult::Changed(Some(previous), lock) = &mut result {
-                    lock.rewrite_urls_from(previous);
-                    if lock == previous {
-                        skip_commit = true;
-                    }
-                }
-
-                // If the lockfile changed, write it to disk.
-                if !matches!(self.mode, LockMode::DryRun(_)) && !skip_commit {
-                    if let LockResult::Changed(_, lock) = &result {
+                // fork: rewrite proxy registry URLs to their canonical
+                // counterparts based on UV_PYPI_PROXIES; see astral-sh/uv#6349.
+                if let LockResult::Changed(previous, lock) = &mut result {
+                    lock.rewrite_proxy_urls();
+                    if previous.as_ref().is_some_and(|prev| prev == lock) {
+                        // URL rewrite made the new lock identical to the
+                        // previous one — skip the write to avoid touching mtime.
+                    } else if !matches!(self.mode, LockMode::DryRun(_)) {
                         target.commit(lock).await?;
                     }
                 }

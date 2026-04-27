@@ -1929,13 +1929,12 @@ impl Lock {
             // If the lockfile references an index that was not provided, we can't validate it.
             if let Source::Registry(index) = &package.id.source {
                 match index {
-                    // fork: skip the remote-index URL check. URL preservation
-                    // (`rewrite_urls_from`) intentionally keeps the *previous*
-                    // registry URL in the lockfile, which will not match the
-                    // current `UV_DEFAULT_INDEX` when the user switches mirrors.
-                    // Without this, `satisfies` returns `MissingRemoteIndex` on
-                    // every run, defeating the lock cache and forcing a full
-                    // re-resolve.
+                    // fork: skip the remote-index URL check. UV_PYPI_PROXIES
+                    // rewrites proxy registry URLs to canonical counterparts in
+                    // the lockfile, which won't match the current
+                    // UV_DEFAULT_INDEX. Without this, `satisfies` returns
+                    // `MissingRemoteIndex` on every run, defeating the lock
+                    // cache and forcing a full re-resolve.
                     RegistrySource::Url(_) => {}
                     RegistrySource::Path(path) => {
                         if locals.as_ref().is_some_and(|locals| !locals.contains(path)) {
