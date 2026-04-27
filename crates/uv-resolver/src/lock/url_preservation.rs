@@ -5,7 +5,7 @@
 //! `uv.lock`.  This creates noisy diffs and breaks portability across
 //! environments that use different mirrors.
 //!
-//! The `UV_PYPI_PROXIES` environment variable provides a mapping from
+//! The `UV_INDEX_PROXIES` environment variable provides a mapping from
 //! canonical URLs to proxy URLs.  After resolution, [`Lock::rewrite_proxy_urls`]
 //! replaces every proxy registry URL with its canonical counterpart in the
 //! lockfile, keeping it stable regardless of which mirror resolved the package.
@@ -13,7 +13,7 @@
 //! Format: `<canonical>:<proxy>,<canonical2>:<proxy2>`
 //!
 //! Example:
-//!   UV_PYPI_PROXIES=https://pypi.org/simple:https://pypi-proxy.example.com/simple
+//!   UV_INDEX_PROXIES=https://pypi.org/simple:https://pypi-proxy.example.com/simple
 
 use std::collections::BTreeSet;
 
@@ -28,11 +28,11 @@ struct ProxyMapping {
     proxy: UrlString,
 }
 
-/// Parse `UV_PYPI_PROXIES` into a list of mappings.
+/// Parse `UV_INDEX_PROXIES` into a list of mappings.
 ///
 /// Format: `canonical:proxy,canonical2:proxy2`
 fn parse_proxy_mappings() -> Vec<ProxyMapping> {
-    let Some(value) = std::env::var("UV_PYPI_PROXIES").ok() else {
+    let Some(value) = std::env::var("UV_INDEX_PROXIES").ok() else {
         return Vec::new();
     };
     value
@@ -60,7 +60,7 @@ fn parse_proxy_mappings() -> Vec<ProxyMapping> {
         .collect()
 }
 
-/// Add canonical URLs from `UV_PYPI_PROXIES` to the set of known remote
+/// Add canonical URLs from `UV_INDEX_PROXIES` to the set of known remote
 /// indexes so that `satisfies()` recognizes lockfile entries written with
 /// canonical URLs as valid.
 pub(super) fn canonical_urls(remotes: &mut BTreeSet<UrlString>) {
@@ -71,7 +71,7 @@ pub(super) fn canonical_urls(remotes: &mut BTreeSet<UrlString>) {
 
 impl Lock {
     /// Rewrite proxy registry URLs to their canonical counterparts based on
-    /// the `UV_PYPI_PROXIES` environment variable.
+    /// the `UV_INDEX_PROXIES` environment variable.
     pub fn rewrite_proxy_urls(&mut self) {
         let mappings = parse_proxy_mappings();
         if mappings.is_empty() {
@@ -169,7 +169,7 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
     #[test]
     fn rewrites_proxy_to_canonical() {
         std::env::set_var(
-            "UV_PYPI_PROXIES",
+            "UV_INDEX_PROXIES",
             "https://pypi.org/simple:https://mirror.example.com/simple",
         );
         let mut lock = make_lock(
@@ -189,13 +189,13 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
             rendered.contains("https://mirror.example.com/files/iniconfig"),
             "file URLs should be left as-is:\n{rendered}"
         );
-        std::env::remove_var("UV_PYPI_PROXIES");
+        std::env::remove_var("UV_INDEX_PROXIES");
     }
 
     #[test]
     fn rewrites_dependency_package_ids() {
         std::env::set_var(
-            "UV_PYPI_PROXIES",
+            "UV_INDEX_PROXIES",
             "https://pypi.org/simple:https://mirror.example.com/simple",
         );
         let mut lock = make_lock_with_dependency(
@@ -226,12 +226,12 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
                 assert_eq!(resolved.id.name, dep.package_id.name);
             }
         }
-        std::env::remove_var("UV_PYPI_PROXIES");
+        std::env::remove_var("UV_INDEX_PROXIES");
     }
 
     #[test]
     fn no_env_var_is_noop() {
-        std::env::remove_var("UV_PYPI_PROXIES");
+        std::env::remove_var("UV_INDEX_PROXIES");
         let mut lock = make_lock(
             "https://mirror.example.com/simple",
             "https://mirror.example.com/files/iniconfig",
@@ -249,7 +249,7 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
     #[test]
     fn no_match_leaves_urls_untouched() {
         std::env::set_var(
-            "UV_PYPI_PROXIES",
+            "UV_INDEX_PROXIES",
             "https://pypi.org/simple:https://other-proxy.example.com/simple",
         );
         let mut lock = make_lock(
@@ -264,6 +264,6 @@ wheels = [{{ url = "{file_prefix}/iniconfig-2.0.0-py3-none-any.whl", hash = "sha
             rendered.contains(r#"registry = "https://mirror.example.com/simple""#),
             "non-matching registry URL should be unchanged:\n{rendered}"
         );
-        std::env::remove_var("UV_PYPI_PROXIES");
+        std::env::remove_var("UV_INDEX_PROXIES");
     }
 }

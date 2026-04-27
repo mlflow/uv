@@ -454,7 +454,7 @@ impl<'env> LockOperation<'env> {
                 .await?;
 
                 // fork: rewrite proxy registry URLs to their canonical
-                // counterparts based on UV_PYPI_PROXIES; see astral-sh/uv#6349.
+                // counterparts based on UV_INDEX_PROXIES; see astral-sh/uv#6349.
                 if let LockResult::Changed(previous, lock) = &mut result {
                     lock.rewrite_proxy_urls();
                     if previous.as_ref().is_some_and(|prev| prev == lock) {
