@@ -98,9 +98,21 @@ jobs:
 
           ## Fork behavior
 
-          This fork preserves registry, sdist, and wheel URLs in \`uv.lock\` across re-locks
-          when the package name and version are unchanged. See
-          [astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349).
+          This fork rewrites proxy registry URLs in \`uv.lock\` to their canonical counterparts
+          via the \`UV_PYPI_PROXIES\` environment variable. This prevents noisy diffs and keeps
+          the lockfile portable across environments that use different PyPI mirrors.
+          See [astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349).
+
+          ## Setup
+
+          Set \`UV_PYPI_PROXIES\` with \`canonical:proxy\` mappings (comma-separated for multiple):
+
+          \`\`\`bash
+          export UV_PYPI_PROXIES=https://pypi.org/simple:https://your-pypi-proxy.example.com/simple
+          \`\`\`
+
+          Then use \`uv lock\`, \`uv add\`, etc. as normal. The lockfile will always contain the
+          canonical URL (\`https://pypi.org/simple\`) regardless of which mirror resolved the package.
 
           ## Install
 
