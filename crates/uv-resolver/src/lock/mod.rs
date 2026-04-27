@@ -1826,18 +1826,21 @@ impl Lock {
         }
 
         // Collect the set of available indexes (both `--index-url` and `--find-links` entries).
-        let mut remotes = indexes.map(|locations| {
-            locations
-                .allowed_indexes()
-                .into_iter()
-                .filter_map(|index| match index.url() {
-                    IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-                        Some(UrlString::from(index.url().without_credentials().as_ref()))
-                    }
-                    IndexUrl::Path(_) => None,
-                })
-                .collect::<BTreeSet<_>>()
-        });
+        // fork: remote index collection commented out — URL preservation means the
+        // lockfile intentionally keeps previous registry URLs that may not match the
+        // current index configuration.
+        // let mut remotes = indexes.map(|locations| {
+        //     locations
+        //         .allowed_indexes()
+        //         .into_iter()
+        //         .filter_map(|index| match index.url() {
+        //             IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+        //                 Some(UrlString::from(index.url().without_credentials().as_ref()))
+        //             }
+        //             IndexUrl::Path(_) => None,
+        //         })
+        //         .collect::<BTreeSet<_>>()
+        // });
 
         let mut locals = indexes.map(|locations| {
             locations
@@ -1884,21 +1887,23 @@ impl Lock {
                 index: Some(index), ..
             } = &requirement.source
             {
-                match &index.url {
-                    IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-                        if let Some(remotes) = remotes.as_mut() {
-                            remotes.insert(UrlString::from(
-                                index.url().without_credentials().as_ref(),
-                            ));
-                        }
-                    }
-                    IndexUrl::Path(url) => {
-                        if let Some(locals) = locals.as_mut() {
-                            if let Some(path) = url.to_file_path().ok().and_then(|path| {
-                                try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
-                            }) {
-                                locals.insert(path.into_boxed_path());
-                            }
+                // fork: remote index insertion commented out — see note above.
+                // match &index.url {
+                //     IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+                //         if let Some(remotes) = remotes.as_mut() {
+                //             remotes.insert(UrlString::from(
+                //                 index.url().without_credentials().as_ref(),
+                //             ));
+                //         }
+                //     }
+                //     IndexUrl::Path(url) => { ... }
+                // }
+                if let IndexUrl::Path(url) = &index.url {
+                    if let Some(locals) = locals.as_mut() {
+                        if let Some(path) = url.to_file_path().ok().and_then(|path| {
+                            try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
+                        }) {
+                            locals.insert(path.into_boxed_path());
                         }
                     }
                 }
@@ -1955,20 +1960,14 @@ impl Lock {
             // If the lockfile references an index that was not provided, we can't validate it.
             if let Source::Registry(index) = &package.id.source {
                 match index {
-                    RegistrySource::Url(url) => {
-                        if remotes
-                            .as_ref()
-                            .is_some_and(|remotes| !remotes.contains(url))
-                        {
-                            let name = &package.id.name;
-                            let version = &package
-                                .id
-                                .version
-                                .as_ref()
-                                .expect("version for registry source");
-                            return Ok(SatisfiesResult::MissingRemoteIndex(name, version, url));
-                        }
-                    }
+                    // fork: skip the remote-index URL check. URL preservation
+                    // (`rewrite_urls_from`) intentionally keeps the *previous*
+                    // registry URL in the lockfile, which will not match the
+                    // current `UV_DEFAULT_INDEX` when the user switches mirrors.
+                    // Without this, `satisfies` returns `MissingRemoteIndex` on
+                    // every run, defeating the lock cache and forcing a full
+                    // re-resolve.
+                    RegistrySource::Url(_) => {}
                     RegistrySource::Path(path) => {
                         if locals.as_ref().is_some_and(|locals| !locals.contains(path)) {
                             let name = &package.id.name;
@@ -2258,21 +2257,32 @@ impl Lock {
                     index: Some(index), ..
                 } = &requirement.source
                 {
-                    match &index.url {
-                        IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
-                            if let Some(remotes) = remotes.as_mut() {
-                                remotes.insert(UrlString::from(
-                                    index.url().without_credentials().as_ref(),
-                                ));
-                            }
-                        }
-                        IndexUrl::Path(url) => {
-                            if let Some(locals) = locals.as_mut() {
-                                if let Some(path) = url.to_file_path().ok().and_then(|path| {
-                                    try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
-                                }) {
-                                    locals.insert(path.into_boxed_path());
-                                }
+                    // fork: remote index insertion commented out — URL preservation
+                    // keeps previous registry URLs, so we don't need to track remotes.
+                    // match &index.url {
+                    //     IndexUrl::Pypi(_) | IndexUrl::Url(_) => {
+                    //         if let Some(remotes) = remotes.as_mut() {
+                    //             remotes.insert(UrlString::from(
+                    //                 index.url().without_credentials().as_ref(),
+                    //             ));
+                    //         }
+                    //     }
+                    //     IndexUrl::Path(url) => {
+                    //         if let Some(locals) = locals.as_mut() {
+                    //             if let Some(path) = url.to_file_path().ok().and_then(|path| {
+                    //                 try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
+                    //             }) {
+                    //                 locals.insert(path.into_boxed_path());
+                    //             }
+                    //         }
+                    //     }
+                    // }
+                    if let IndexUrl::Path(url) = &index.url {
+                        if let Some(locals) = locals.as_mut() {
+                            if let Some(path) = url.to_file_path().ok().and_then(|path| {
+                                try_relative_to_if(&path, root, !url.was_given_absolute()).ok()
+                            }) {
+                                locals.insert(path.into_boxed_path());
                             }
                         }
                     }
