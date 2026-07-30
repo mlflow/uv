@@ -97,6 +97,8 @@ pub use crate::traits::*;
 
 mod annotation;
 mod any;
+// fork: rewrite proxy artifact URLs via UV_ARTIFACT_PROXIES; see astral-sh/uv#6349.
+mod artifact_proxies;
 mod build_info;
 mod build_requires;
 mod buildable;

@@ -85,7 +85,11 @@ impl FileLocation {
     /// that page.
     pub fn new(url: SmallString, base: &SmallString) -> Self {
         match split_scheme(&url) {
-            Some(..) => Self::AbsoluteUrl(UrlString::new(url)),
+            // fork: rewrite proxy artifact URLs to their canonical counterparts, so that
+            // downloads and `uv.lock` both use the canonical host; see astral-sh/uv#6349.
+            Some(..) => {
+                Self::AbsoluteUrl(UrlString::new(crate::artifact_proxies::canonicalize(url)))
+            }
             None => Self::RelativeUrl(base.clone(), url),
         }
     }
