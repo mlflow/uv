@@ -81,6 +81,8 @@ mod installable;
 mod map;
 mod serialize;
 mod tree;
+// fork: rewrite proxy registry URLs via UV_INDEX_PROXIES; see astral-sh/uv#6349.
+mod url_preservation;
 
 /// The current version of the lockfile format.
 pub const VERSION: u32 = 1;
@@ -2511,6 +2513,12 @@ impl Lock {
                 .collect::<BTreeSet<_>>()
         });
 
+        // fork: add canonical URLs from UV_INDEX_PROXIES so that the
+        // satisfies check recognizes them as valid remote indexes.
+        if let Some(remotes) = remotes.as_mut() {
+            url_preservation::canonical_urls(remotes);
+        }
+
         let mut locals = indexes.map(|locations| {
             locations
                 .allowed_indexes()
@@ -4050,8 +4058,11 @@ impl Package {
                     zstd: None,
                 });
 
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
 
                 let reg_dist = RegistrySourceDist {
@@ -4214,8 +4225,11 @@ impl Package {
     pub fn index(&self, root: &Path) -> Result<Option<IndexUrl>, LockError> {
         match &self.id.source {
             Source::Registry(RegistrySource::Url(url)) => {
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
                 Ok(Some(index))
             }
@@ -5893,8 +5907,11 @@ impl Wheel {
                         })
                         .map(Box::new),
                 });
+                // fork: resolve canonical URL back to proxy for fetching;
+                // see astral-sh/uv#6349.
+                let resolved_url = url_preservation::proxy_url(url);
                 let index = IndexUrl::from(VerbatimUrl::from_url(
-                    url.to_url().map_err(LockErrorKind::InvalidUrl)?,
+                    resolved_url.to_url().map_err(LockErrorKind::InvalidUrl)?,
                 ));
                 Ok(RegistryBuiltWheel {
                     filename,
