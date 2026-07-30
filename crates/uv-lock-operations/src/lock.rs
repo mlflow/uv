@@ -246,7 +246,8 @@ impl<'env> LockOperation<'env> {
                 };
 
                 // Perform the lock operation.
-                let result = Box::pin(do_lock(
+                // fork: was `let result` — now mutable for URL preservation below.
+                let mut result = Box::pin(do_lock(
                     target,
                     interpreter,
                     existing,
@@ -267,10 +268,25 @@ impl<'env> LockOperation<'env> {
                 ))
                 .await?;
 
-                // If the lockfile changed, write it to disk.
-                if !matches!(self.mode, LockMode::DryRun(_)) {
-                    if let LockResult::Changed(_, lock) = &result {
-                        target.commit(lock).await?;
+                // fork: rewrite proxy registry URLs to their canonical
+                // counterparts based on UV_INDEX_PROXIES; see astral-sh/uv#6349.
+                match &mut result {
+                    LockResult::Changed(previous, lock) => {
+                        lock.rewrite_proxy_urls();
+                        if previous.as_ref().is_some_and(|prev| prev == lock) {
+                            // URL rewrite made the new lock identical to the
+                            // previous one — skip the write to avoid touching mtime.
+                        } else if !matches!(self.mode, LockMode::DryRun(_)) {
+                            target.commit(lock).await?;
+                        }
+                    }
+                    LockResult::Unchanged(lock) => {
+                        let before = lock.to_toml()?;
+                        lock.rewrite_proxy_urls();
+                        let after = lock.to_toml()?;
+                        if before != after && !matches!(self.mode, LockMode::DryRun(_)) {
+                            target.commit(lock).await?;
+                        }
                     }
                 }
 
